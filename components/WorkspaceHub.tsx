@@ -40,6 +40,7 @@ import {
   uid,
   validateCV,
   filledEntry,
+  readableText,
 } from "@/lib/model";
 import {
   ImportRecord,
@@ -57,6 +58,7 @@ import {
   defaultWorkspace,
 } from "@/lib/workspace";
 import ImportSelector from "./ImportSelector";
+import { importReviewNotes } from "@/lib/structured-import";
 type Props = {
   panel: string;
   workspace: Workspace;
@@ -83,7 +85,8 @@ export default function WorkspaceHub(p: Props) {
     [error, setError] = useState(""),
     [deleteId, setDeleteId] = useState(""),
     [confirmApply, setConfirmApply] = useState(false),
-    [clearAll, setClearAll] = useState(false);
+    [clearAll, setClearAll] = useState(false),
+    [aiCode, setAICode] = useState("");
   const fileRef = useRef<HTMLInputElement>(null),
     abort = useRef<AbortController | null>(null);
   useEffect(() => () => abort.current?.abort(), []);
@@ -586,10 +589,64 @@ export default function WorkspaceHub(p: Props) {
               <div className="hub-card">
                 <h2>Check the details first</h2>
                 <p className="hub-description">
-                  Contact fields are detected from the source. Section text is
-                  preserved, not rewritten. Fill in missing fields and split
-                  entries as needed. Unassigned information needs your review.
+                  Titles, organizations, locations, dates and descriptions are
+                  detected separately. Review the entries before saving or
+                  applying.
                 </p>
+                {[...(review.notes ?? []), ...importReviewNotes(review.cv)].map(
+                  (note, i) => (
+                    <p className="hub-description" key={i}>
+                      {note}
+                    </p>
+                  ),
+                )}
+                <label className="hub-field">
+                  <span>Workspace access code for optional AI detection</span>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={aiCode}
+                    onChange={(e) => setAICode(e.target.value)}
+                  />
+                </label>
+                <button
+                  className="button subtle"
+                  disabled={busy || !aiCode}
+                  onClick={async () => {
+                    if (
+                      !window.confirm(
+                        "Allow your CV text to be sent to your configured AI service for advanced field detection? Review the result before applying.",
+                      )
+                    )
+                      return;
+                    setBusy(true);
+                    setError("");
+                    try {
+                      const response = await fetch("/api/import-structure", {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          "x-cv-access-code": aiCode,
+                        },
+                        body: JSON.stringify({ source: review.source }),
+                      });
+                      const result = await response.json();
+                      if (!response.ok)
+                        throw new Error(result.error || "Detection failed.");
+                      openReview({
+                        ...review,
+                        cv: validateCV(result.cv),
+                        notes: result.notes,
+                      });
+                    } catch (e) {
+                      setError((e as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Advanced AI field detection
+                </button>
                 <label className="hub-field">
                   <span>Saved import name</span>
                   <input
@@ -606,7 +663,7 @@ export default function WorkspaceHub(p: Props) {
                       <span>{profileLabels[k]}</span>
                       <input
                         maxLength={2000}
-                        value={review.cv.profile[k]}
+                        value={readableText(review.cv.profile[k] ?? "")}
                         onChange={(e) =>
                           editCV({
                             ...review.cv,
@@ -625,7 +682,7 @@ export default function WorkspaceHub(p: Props) {
                   <textarea
                     maxLength={20000}
                     rows={4}
-                    value={review.cv.summary}
+                    value={readableText(review.cv.summary)}
                     onChange={(e) =>
                       editCV({ ...review.cv, summary: e.target.value })
                     }
@@ -649,7 +706,7 @@ export default function WorkspaceHub(p: Props) {
                     <span>Section title</span>
                     <input
                       maxLength={120}
-                      value={s.title}
+                      value={readableText(s.title)}
                       onChange={(e) =>
                         editCV({
                           ...review.cv,
@@ -692,13 +749,23 @@ export default function WorkspaceHub(p: Props) {
                           ["subtitle", "Organization / institution / authors"],
                           ["date", "Dates"],
                           ["location", "Location"],
-                          ["url", "Link"],
+                          ["url", "Link URL"],
+                          ["urlLabel", "Link display name"],
                         ].map(([key, label]) => (
                           <label className="hub-field" key={key}>
                             <span>{label}</span>
                             <input
                               maxLength={2000}
-                              value={entry[key as keyof typeof entry]}
+                              value={readableText(
+                                entry[
+                                  key as
+                                    | "title"
+                                    | "subtitle"
+                                    | "date"
+                                    | "location"
+                                    | "url"
+                                ] ?? ""
+                              )}
                               onChange={(e) =>
                                 reviseEntry(si, ei, key, e.target.value)
                               }
@@ -711,7 +778,7 @@ export default function WorkspaceHub(p: Props) {
                         <textarea
                           rows={6}
                           maxLength={20000}
-                          value={entry.description}
+                          value={readableText(entry.description)}
                           onChange={(e) =>
                             reviseEntry(si, ei, "description", e.target.value)
                           }
@@ -859,7 +926,7 @@ export default function WorkspaceHub(p: Props) {
                   <span>{profileLabels[k]}</span>
                   <input
                     maxLength={2000}
-                    value={w.profile[k]}
+                    value={readableText(w.profile[k] ?? "")}
                     placeholder={k === "name" ? "Your full name" : ""}
                     onChange={(e) => updateProfile(k, e.target.value)}
                   />

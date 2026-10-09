@@ -1,3 +1,7 @@
+> Editing update: Word-style inline font, size, color, bold/italic/underline and named links; left/center/right/justify alignment; resizable LaTeX workspace; two-way CV-field synchronization with individual unsupported-part reporting. Live preview and PDF download share the same generated PDF. Custom LaTeX can recover editable text and links from its compiled PDF after review.
+
+> Latest update: structured per-entry CV import with review, editable XeLaTeX and compiled PDF preview, Overleaf export, drag ordering/style controls, 22 templates and 15 font choices (Editorial requires your licensed upload). See PATCH_INSTRUCTIONS.md in the update ZIP and the included backend/latex/README.md for compiler setup.
+
 # CV Banao
 
 A dedicated CV builder for academic, research, PhD / higher study and industry applications. Next.js, React, TypeScript and Lucide React, with a Quicksand interface.

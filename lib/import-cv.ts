@@ -1,13 +1,6 @@
-import {
-  CV,
-  Profile,
-  Section,
-  createCV,
-  createSection,
-  emptyEntry,
-  uid,
-  validateCV,
-} from "./model";
+import { pdfLayoutText } from "./pdf-layout";
+import { parseStructuredText } from "./structured-import";
+import { CV, Profile, uid, validateCV } from "./model";
 export const IMPORT_LIMIT = 120000;
 export type ImportRecord = {
   id: string;
@@ -16,6 +9,7 @@ export type ImportRecord = {
   sourceType: string;
   source: string;
   cv: CV;
+  notes?: string[];
 };
 export const profileKeys: (keyof Profile)[] = [
   "name",
@@ -26,6 +20,7 @@ export const profileKeys: (keyof Profile)[] = [
   "website",
   "linkedin",
   "scholar",
+  "websiteLabel", "linkedinLabel", "scholarLabel",
 ];
 export const profileLabels: Record<keyof Profile, string> = {
   name: "Full name",
@@ -36,140 +31,15 @@ export const profileLabels: Record<keyof Profile, string> = {
   website: "Website",
   linkedin: "LinkedIn",
   scholar: "Scholar / ORCID / GitHub",
+  websiteLabel: "Website display name",
+  linkedinLabel: "LinkedIn display name",
+  scholarLabel: "Scholar / GitHub display name",
 };
-const headings: [RegExp, string, Section["kind"]][] = [
-  [
-    /^(education|academic qualifications?|educational background)$/i,
-    "Education",
-    "education",
-  ],
-  [
-    /^(work experience|professional experience|employment|experience)$/i,
-    "Experience",
-    "experience",
-  ],
-  [
-    /^(research experience|research work)$/i,
-    "Research experience",
-    "experience",
-  ],
-  [/^(publications?|research publications?)$/i, "Publications", "publications"],
-  [/^(projects?|research projects?)$/i, "Projects", "experience"],
-  [
-    /^(skills|technical skills|skills & methods)$/i,
-    "Skills & methods",
-    "skills",
-  ],
-  [
-    /^(awards.*|honou?rs.*|scholarships.*)$/i,
-    "Awards & scholarships",
-    "experience",
-  ],
-  [/^(certifications?.*|training)$/i, "Certifications", "experience"],
-  [/^(languages?)$/i, "Languages", "skills"],
-  [/^(references?|referees)$/i, "References", "text"],
-  [/^(research interests?|interests?)$/i, "Research interests", "text"],
-  [/^(teaching.*)$/i, "Teaching experience", "experience"],
-  [/^(volunteer.*|leadership.*)$/i, "Leadership & volunteering", "experience"],
-];
-export function parseCVText(source: string): CV {
-  if (!source.trim()) throw new Error("Enter some CV text first.");
-  if (source.length > IMPORT_LIMIT)
-    throw new Error("Use up to 120,000 characters per import.");
-  const cv = createCV("academic");
-  cv.profile.name = "";
-  cv.sections = [];
-  const lines = source.replace(/\r/g, "").split("\n");
-  const first = lines
-    .map((l) => l.trim())
-    .find((l) => l && !/^\[Page \d+\]$/.test(l));
-  if (
-    first &&
-    first.length < 100 &&
-    !/@|curriculum vitae|resume|résumé|^cv$/i.test(first) &&
-    !headings.some(([re]) => re.test(first))
-  )
-    cv.profile.name = first;
-  cv.profile.email = source.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i)?.[0] ?? "";
-  cv.profile.phone =
-    source
-      .match(
-        /(?:phone|mobile|tel(?:ephone)?)\s*[:：]?\s*([+\d][\d ()-]{7,22})/i,
-      )?.[1]
-      ?.trim() ??
-    source.match(/\+\d[\d ()-]{7,20}\d/)?.[0]?.trim() ??
-    source.match(/\b0\d{9,13}\b/)?.[0] ??
-    "";
-  if (cv.profile.phone.replace(/\D/g, "").length < 8) cv.profile.phone = "";
-  const links =
-    source.match(
-      /(?:https?:\/\/)?(?:www\.)?(?:linkedin\.com|github\.com|scholar\.google\.[a-z.]+|orcid\.org)\/[^\s|]+/gi,
-    ) ?? [];
-  for (const url of links) {
-    if (url.includes("linkedin")) cv.profile.linkedin = url;
-    else cv.profile.scholar = url;
-  }
-  let current: Section | null = null;
-  let summary = false;
-  let unassigned: string[] = [];
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line || /^\[Page \d+\]$/.test(line)) continue;
-    const label = line.replace(/[:：]\s*$/, "");
-    const h = headings.find(([re]) => re.test(label));
-    if (h) {
-      current = createSection(h[1], h[2]);
-      current.entries[0].description = "";
-      cv.sections.push(current);
-      summary = false;
-      continue;
-    }
-    if (
-      /^(summary|profile|professional summary|objective|about me)$/i.test(label)
-    ) {
-      summary = true;
-      current = null;
-      continue;
-    }
-    if (summary) {
-      cv.summary += (cv.summary ? "\n" : "") + line;
-      continue;
-    }
-    if (current) {
-      const e = current.entries[0];
-      e.description += (e.description ? "\n" : "") + line;
-    } else if (
-      !Object.values(cv.profile).some(
-        (value) => value.trim() && value.trim() === line,
-      )
-    )
-      unassigned.push(line);
-  }
-  // Preserve all unclassified source lines for review; no qualifications are inferred.
-  if (unassigned.length) {
-    const s = createSection(
-      "Unassigned information (review before use)",
-      "text",
-    );
-    s.entries[0].description = unassigned.join("\n");
-    cv.sections.push(s);
-  }
-  if (cv.sections.length > 40)
-    throw new Error(
-      "This document has too many sections. Import a shorter version.",
-    );
-  for (const s of cv.sections) {
-    const text = s.entries[0].description;
-    if (text.length > 20000) {
-      s.entries = [];
-      for (let i = 0; i < text.length; i += 19000)
-        s.entries.push({
-          ...emptyEntry(),
-          description: text.slice(i, i + 19000),
-        });
-    }
-  }
-  return validateCV(cv);
+export function parseCVText(
+  source: string,
+  annotationLinks: string[] = [],
+): CV {
+  return parseStructuredText(source, annotationLinks);
 }
 export function importBackup(text: string): CV {
   let raw;
@@ -222,6 +92,13 @@ export function validateImport(raw: unknown): ImportRecord {
     typeof r.sourceType !== "string"
   )
     throw new Error("Invalid saved import");
+  if (
+    r.notes &&
+    (!Array.isArray(r.notes) ||
+      r.notes.length > 20 ||
+      r.notes.some((n) => typeof n !== "string" || n.length > 1000))
+  )
+    throw new Error("Invalid import notes");
   return { ...r, cv: validateCV(r.cv) };
 }
 // Inspect ZIP directory sizes before decompressing DOCX to reject excessive documents.
@@ -330,10 +207,7 @@ export async function extractImport(
         progress(`Reading page ${i} of ${doc.numPages}…`);
         const page = await doc.getPage(i);
         const content = await page.getTextContent();
-        let lines = "";
-        for (const item of content.items) {
-          if ("str" in item) lines += item.str + (item.hasEOL ? "\n" : " ");
-        }
+        let lines = pdfLayoutText(content.items, await page.getAnnotations());
         if (lines.trim().length < 30 && ocr) {
           if (doc.numPages > 12)
             throw new Error(

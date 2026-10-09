@@ -1,4 +1,8 @@
-import type { CSSProperties } from "react";
+import RichText from "./RichText";
+import {profileLinkLabel,entryLinkLabel} from "@/lib/links";
+import {richLines,richPlain,withoutBullet} from "@/lib/rich";
+import { useEffect, type CSSProperties } from "react";
+import { loadEditorial } from "@/lib/fonts";
 import {
   CV,
   filledEntry,
@@ -14,6 +18,9 @@ export default function Preview({
   cv: CV;
   mini?: boolean;
 }) {
+  useEffect(() => {
+    if (cv.design.font === "editorial") void loadEditorial().catch(() => {});
+  }, [cv.design.font]);
   const p = cv.profile;
   const hasContent =
     cv.summary ||
@@ -36,9 +43,9 @@ export default function Preview({
       }
     >
       <header className="cv-header">
-        <h1>{p.name || "Your name"}</h1>
+        <h1><RichText text={p.name || "Your name"}/></h1>
         {p.headline ? (
-          <p className="cv-headline">{p.headline}</p>
+          <p className="cv-headline"><RichText text={p.headline}/></p>
         ) : (
           !hasContent && (
             <p className="cv-placeholder">
@@ -48,7 +55,7 @@ export default function Preview({
         )}
         <div className="cv-contact">
           {[p.email, p.phone, p.location].filter(Boolean).map((v, i) => (
-            <span key={i}>{v}</span>
+            <span key={i}><RichText text={v}/></span>
           ))}
         </div>
         <div className="cv-links">
@@ -61,7 +68,7 @@ export default function Preview({
                 target="_blank"
                 rel="noreferrer"
               >
-                {p[k].replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                <RichText text={profileLinkLabel(p,k)}/>
               </a>
             ))}
         </div>
@@ -73,25 +80,55 @@ export default function Preview({
               ? "Professional summary"
               : "Profile"}
           </h2>
-          <p className="cv-description">{cv.summary}</p>
+          <p className="cv-description" style={{textAlign:cv.design.textAlign}}><RichText text={cv.summary}/></p>
         </section>
       )}
       {cv.sections
         .filter((s) => s.visible && s.entries.some(filledEntry))
         .map((s) => (
-          <section className="cv-section" key={s.id}>
-            <h2>{s.title}</h2>
+          <section
+            className="cv-section"
+            key={s.id}
+            style={
+              s.style ? { marginTop: s.style.spacingBefore * 1.333 } : undefined
+            }
+          >
+            <h2
+              style={
+                s.style
+                  ? {
+                      fontSize: s.style.headingSize * 1.333,
+                      color: s.style.color,
+                      borderBottom: s.style.divider
+                        ? `1px solid ${s.style.color}`
+                        : "none",
+                    }
+                  : undefined
+              }
+            >
+              <RichText text={s.title}/>
+            </h2>
             {s.entries.filter(filledEntry).map((e) => (
-              <div className={`cv-entry kind-${s.kind}`} key={e.id}>
+              <div
+                className={`cv-entry kind-${s.kind}`}
+                key={e.id}
+                style={
+                  {textAlign:e.style?.textAlign ?? s.style?.textAlign ?? cv.design.textAlign,
+                    ...(e.style ? {
+                        marginLeft: e.style.indent * 1.333,
+                        marginBottom: e.style.spacingAfter * 1.333,
+                      } : {})}
+                }
+              >
                 {e.title && (
                   <div className="cv-entry-top">
-                    <h3>{e.title}</h3>
-                    {e.date && <span>{e.date}</span>}
+                    <h3><RichText text={e.title}/></h3>
+                    {e.date && <span><RichText text={e.date}/></span>}
                   </div>
                 )}
                 {(e.subtitle || e.location || (!e.title && e.date)) && (
                   <div className="cv-entry-sub">
-                    <span>{e.subtitle}</span>
+                    <span><RichText text={e.subtitle}/></span>
                     <span>
                       {[e.location, !e.title && e.date]
                         .filter(Boolean)
@@ -106,21 +143,19 @@ export default function Preview({
                     target="_blank"
                     rel="noreferrer"
                   >
-                    {e.url.replace(/^https?:\/\//, "")}
+                    <RichText text={entryLinkLabel(e)}/>
                   </a>
                 )}
-                {e.description
-                  .split("\n")
-                  .filter((l) => l.trim())
+                {richLines(e.description)
                   .map((line, i) =>
-                    /^[•*\-]\s/.test(line) ? (
+                    /^[•*\-]\s/.test(richPlain(line)) ? (
                       <div className="cv-bullet" key={i}>
                         <span>•</span>
-                        <span>{line.replace(/^[•*\-]\s/, "")}</span>
+                        <span><RichText text={withoutBullet(line)}/></span>
                       </div>
                     ) : (
                       <p className="cv-description" key={i}>
-                        {line}
+                        <RichText text={line}/>
                       </p>
                     ),
                   )}

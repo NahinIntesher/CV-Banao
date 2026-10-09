@@ -61,9 +61,11 @@ export function validateWorkspace(raw: unknown): Workspace {
     !w.settings
   )
     throw new Error("Invalid workspace backup.");
-  for (const k of profileKeys)
+  for (const k of profileKeys) {
+    if(k.endsWith("Label") && w.profile[k] === undefined)continue;
     if (typeof w.profile[k] !== "string" || w.profile[k].length > 2000)
       throw new Error("Invalid profile.");
+  }
   const s = w.settings;
   if (
     !workspaceColors.some((c) => c.id === s.color) ||

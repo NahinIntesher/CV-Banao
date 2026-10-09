@@ -16,10 +16,10 @@ import {
   validateImport,
 } from "../lib/import-cv";
 import { readWorkspaceBackup, defaultWorkspace } from "../lib/workspace";
-test("20 distinct templates preserve four purposes and five layouts; ten fonts validate", () => {
-  assert.equal(templates.length, 20);
-  assert.equal(new Set(templates.map((t) => t.id)).size, 20);
-  assert.equal(fonts.length, 10);
+test("Reference formats and additional fonts preserve existing templates and purpose support", () => {
+  assert.equal(templates.length, 22);
+  assert.equal(new Set(templates.map((t) => t.id)).size, 22);
+  assert.equal(fonts.length, 15);
   for (const t of templates) {
     const c = createCV(t.id);
     assert.equal(validateCV(c).template, t.id);
@@ -28,7 +28,7 @@ test("20 distinct templates preserve four purposes and five layouts; ten fonts v
       ["academic", "research", "phd", "industry"].includes(purposeOf(t.id)),
     );
   }
-  assert.equal(new Set(templates.map((t) => layoutOf(t.id))).size, 5);
+  assert.equal(new Set(templates.map((t) => layoutOf(t.id))).size, 7);
   for (const f of fonts) {
     const c = createCV();
     c.design.font = f.id;
@@ -43,8 +43,8 @@ test("text import preserves source content and never fabricates absent qualifica
   assert.equal(c.profile.email, "example@example.com");
   assert.equal(c.profile.location, "");
   assert.equal(
-    c.sections.find((s) => s.kind === "education")?.entries[0].description,
-    "BSc Biology\nExample University",
+    c.sections.find((s) => s.kind === "education")?.entries[0].title,
+    "BSc Biology",
   );
   assert.ok(
     c.sections.some((s) =>

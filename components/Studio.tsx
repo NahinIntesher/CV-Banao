@@ -76,6 +76,7 @@ import {
   colors,
   uid,
   filledEntry,
+  readableText,
   download,
   filename,
   validateCV,
@@ -86,10 +87,16 @@ import WorkspaceHub from "./WorkspaceHub";
 import ImportSelector from "./ImportSelector";
 import { useWorkspace } from "@/lib/workspace";
 import { buildFromImport } from "@/lib/import-cv";
-import Preview from "./Preview";
+import ExactPDFPreview from "./ExactPDFPreview";
+import RichEditor from "./RichEditor";
+import {latexToVisual} from "@/lib/latex";
+import AlignmentControl from "./AlignmentControl";
 import BrandMark from "./BrandMark";
 import ThemeControl from "./ThemeControl";
 import ResearchPanel from "./ResearchPanel";
+import LatexStudio, { EditorialUploader } from "./LatexStudio";
+import LayoutEditor from "./LayoutEditor";
+import { compileCV, pdfBlob } from "@/lib/fonts";
 const KEY = "cv-studio.documents.v1";
 const iconFor = (kind: Kind, title = "") => {
   const name = title.toLowerCase();
@@ -275,74 +282,6 @@ function TemplateCard({
     </button>
   );
 }
-function LivePreview({ cv }: { cv: CV }) {
-  const container = useRef<HTMLDivElement>(null),
-    sheet = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(650),
-    [height, setHeight] = useState(1123),
-    [zoom, setZoom] = useState("fit");
-  useEffect(() => {
-    const ro = new ResizeObserver((entries) => {
-      for (const e of entries) {
-        if (e.target === container.current) setWidth(e.contentRect.width);
-        else setHeight(e.contentRect.height);
-      }
-    });
-    if (container.current) ro.observe(container.current);
-    if (sheet.current) ro.observe(sheet.current);
-    return () => ro.disconnect();
-  }, []);
-  const pageWidth = cv.design.paper === "A4" ? 794 : 816;
-  const scale =
-    zoom === "fit"
-      ? Math.min(0.95, Math.max(0.25, (width - 48) / pageWidth))
-      : Number(zoom) / 100;
-  return (
-    <section className="preview-pane" aria-label="CV preview">
-      <div className="preview-toolbar">
-        <div>
-          <span className="live-dot" /> Live preview{" "}
-          <span className="preview-paper-label">
-            {cv.design.paper === "A4" ? "A4" : "US Letter"}
-          </span>
-        </div>
-        <label className="zoom-control">
-          <span className="sr-only">Preview zoom</span>
-          <select value={zoom} onChange={(e) => setZoom(e.target.value)}>
-            <option value="fit">Fit to width</option>
-            <option value="60">60%</option>
-            <option value="80">80%</option>
-            <option value="100">100%</option>
-          </select>
-          <ChevronDown size={13} />
-        </label>
-      </div>
-      <div className="preview-scroll" ref={container}>
-        <div
-          className="paper-stage"
-          style={{ width: pageWidth * scale, height: height * scale }}
-        >
-          <div
-            ref={sheet}
-            style={{
-              width: pageWidth,
-              transform: `scale(${scale})`,
-              transformOrigin: "top left",
-            }}
-          >
-            <Preview cv={cv} />
-          </div>
-        </div>
-        <p className="preview-note">
-          <ShieldCheck size={13} /> Clean, selectable text. No watermark.
-        </p>
-        <p className="pagination-note">
-          Continuous preview · PDF export adds page breaks and page numbers
-        </p>
-      </div>
-    </section>
-  );
-}
 export default function Studio() {
   const {
     workspace,
@@ -468,7 +407,13 @@ export default function Studio() {
     },
     [cv],
   );
-  const patch = (p: Partial<CV>) => commit({ ...cv, ...p });
+  const patch = (p: Partial<CV>) => {
+    const next={...cv,...p};
+    if(!p.latex && (p.profile || p.summary!==undefined || p.sections || p.design) && cv.latex?.mode==="custom") {
+      try {const result=latexToVisual(cv.latex.source);if(result.compatible&&!result.issues.length)next.latex={mode:"generated",source:""};else setToast("Visual data updated. Custom LaTeX is preserved; regenerate to apply changes to its PDF.");} catch {setToast("Visual data updated. Custom LaTeX is preserved; regenerate to apply changes to its PDF.");}
+    }
+    commit(next);
+  };
   const changeProfile = (key: keyof Profile, value: string) =>
     patch({ profile: { ...cv.profile, [key]: value } });
   const changeDesign = (key: keyof CV["design"], value: unknown) =>
@@ -664,7 +609,7 @@ export default function Studio() {
   };
   return (
     <div
-      className={`studio-shell ${["home", "imports", "account", "settings"].includes(panel) ? "hub-mode" : ""}`}
+      className={`studio-shell ${panel === "latex" ? "latex-mode" : ""} ${["home", "imports", "account", "settings"].includes(panel) ? "hub-mode" : ""}`}
       data-history={historyVersion}
     >
       <header className="app-header">
@@ -776,13 +721,27 @@ export default function Studio() {
             onClick={() => navigate("templates")}
           >
             <LayoutTemplate size={17} /> Templates{" "}
-            <span className="new-badge">20</span>
+            <span className="new-badge">{templates.length}</span>
           </button>
           <button
             className={panel === "design" ? "nav-button active" : "nav-button"}
             onClick={() => navigate("design")}
           >
             <Palette size={17} /> Design & layout
+          </button>
+          <button
+            className={panel === "latex" ? "nav-button active" : "nav-button"}
+            onClick={() => navigate("latex")}
+          >
+            <FileText size={17} />
+            LaTeX & PDF
+          </button>
+          <button
+            className={panel === "layout" ? "nav-button active" : "nav-button"}
+            onClick={() => navigate("layout")}
+          >
+            <LayoutTemplate size={17} />
+            Arrange & style
           </button>
         </div>
         <div className="section-nav-title">
@@ -813,7 +772,7 @@ export default function Studio() {
               >
                 <button className="nav-button" onClick={() => navigate(s.id)}>
                   <Icon size={16} />
-                  <span>{s.title}</span>
+                  <span>{readableText(s.title)}</span>
                   {!s.visible && <EyeOff size={12} />}
                 </button>
                 <div className="nav-reorder">
@@ -869,7 +828,7 @@ export default function Studio() {
         </div>
       </aside>
       <main
-        className={`editor-pane ${mobile === "preview" ? "mobile-hide" : ""}`}
+        className={`editor-pane ${mobile === "preview" && panel !== "latex" ? "mobile-hide" : ""}`}
       >
         <div className="editor-topline">
           <span>
@@ -879,6 +838,7 @@ export default function Studio() {
               : "BUILD WITH INTENTION"}
           </span>
           <div className="history-buttons">
+            <button className="editor-mode-switch" onClick={()=>navigate(panel === "latex" ? "profile" : "latex")}>{panel === "latex" ? "Visual editor" : "LaTeX editor"}</button>
             <button
               className="icon-button"
               disabled={!history.current.length}
@@ -900,6 +860,14 @@ export default function Studio() {
           </div>
         </div>
         <div className="editor-scroll" key={panel}>
+          {panel === "latex" && (
+            <LatexStudio cv={cv} onChange={patch} notify={setToast} />
+          )}
+          {panel === "layout" && <LayoutEditor cv={cv} onChange={patch} />}
+          {panel === "design" && cv.design.font === "editorial" && (
+            <EditorialUploader notify={setToast} />
+          )}
+
           {["home", "imports", "account", "settings"].includes(panel) && (
             <WorkspaceHub
               panel={panel}
@@ -983,13 +951,13 @@ export default function Studio() {
                   <h2>Personal details</h2>
                   <span>01</span>
                 </div>
-                <TextInput
+                <RichEditor
                   label="Full name"
                   value={cv.profile.name}
                   onChange={(v) => changeProfile("name", v)}
                   placeholder="Your full name"
                 />
-                <TextInput
+                <RichEditor
                   label="Professional headline"
                   value={cv.profile.headline}
                   onChange={(v) => changeProfile("headline", v)}
@@ -1011,7 +979,7 @@ export default function Studio() {
                     placeholder="+880 …"
                   />
                 </div>
-                <TextInput
+                <RichEditor
                   label="Location"
                   value={cv.profile.location}
                   onChange={(v) => changeProfile("location", v)}
@@ -1029,18 +997,21 @@ export default function Studio() {
                   onChange={(v) => changeProfile("website", v)}
                   placeholder="yourwebsite.com"
                 />
+                <TextInput label="Website display name" value={cv.profile.websiteLabel ?? ""} onChange={(v) => changeProfile("websiteLabel", v)} placeholder="e.g. Website" />
                 <TextInput
                   label="LinkedIn"
                   value={cv.profile.linkedin}
                   onChange={(v) => changeProfile("linkedin", v)}
                   placeholder="linkedin.com/in/your-name"
                 />
+                <TextInput label="LinkedIn display name" value={cv.profile.linkedinLabel ?? ""} onChange={(v) => changeProfile("linkedinLabel", v)} placeholder="e.g. LinkedIn" />
                 <TextInput
                   label="Google Scholar, ORCID or GitHub"
                   value={cv.profile.scholar}
                   onChange={(v) => changeProfile("scholar", v)}
                   placeholder="Your research or project profile"
                 />
+                <TextInput label="Scholar / GitHub display name" value={cv.profile.scholarLabel ?? ""} onChange={(v) => changeProfile("scholarLabel", v)} placeholder="e.g. Scholar / GitHub" />
               </div>
               <div className="form-card">
                 <div className="card-heading">
@@ -1050,18 +1021,7 @@ export default function Studio() {
                       : "Profile / research objective"}
                   </h2>
                 </div>
-                <Field
-                  label="A brief introduction"
-                  hint="Aim for 2–4 focused sentences. Connect your experience to the opportunity you’re seeking."
-                >
-                  <textarea
-                    rows={5}
-                    maxLength={20000}
-                    value={cv.summary}
-                    onChange={(e) => patch({ summary: e.target.value })}
-                    placeholder="What do you study or do? What interests you, and what do you want to contribute?"
-                  />
-                </Field>
+                <RichEditor label="A brief introduction" value={cv.summary} multiline onChange={(summary) => patch({summary})}/>
               </div>
               <div className="gentle-tip">
                 <Sparkles size={17} />
@@ -1219,6 +1179,7 @@ export default function Studio() {
                     onChange={(e) => changeDesign("fontSize", +e.target.value)}
                   />
                 </Field>
+                <AlignmentControl value={cv.design.textAlign} onChange={(textAlign) => changeDesign("textAlign",textAlign)} label="Default body alignment" />
                 <Field
                   label={`Line height · ${cv.design.lineHeight.toFixed(2)}`}
                 >
@@ -1428,7 +1389,7 @@ export default function Studio() {
                       </button>
                     </div>
                   </div>
-                  <TextInput
+                  <RichEditor
                     label={
                       section.kind === "education"
                         ? "Degree / qualification"
@@ -1452,7 +1413,7 @@ export default function Studio() {
                   />
                   {!["skills", "text"].includes(section.kind) && (
                     <>
-                      <TextInput
+                      <RichEditor
                         label={
                           section.kind === "education"
                             ? "Institution"
@@ -1469,7 +1430,7 @@ export default function Studio() {
                         }
                       />
                       <div className="field-grid">
-                        <TextInput
+                        <RichEditor
                           label={
                             section.kind === "publications"
                               ? "Year / status"
@@ -1483,7 +1444,7 @@ export default function Studio() {
                               : "Sep 2023 – Present"
                           }
                         />
-                        <TextInput
+                        <RichEditor
                           label={
                             section.kind === "publications"
                               ? "Journal / venue"
@@ -1508,36 +1469,12 @@ export default function Studio() {
                         onChange={(v) => editEntry(e.id, { url: v })}
                         placeholder="https://…"
                       />
+                      <TextInput label="Link display name" value={e.urlLabel ?? ""} onChange={(v) => editEntry(e.id, {urlLabel: v})} placeholder="e.g. Link, GitHub, Read paper" />
                     </>
                   )}
-                  <Field
-                    label={
-                      section.kind === "skills"
-                        ? "Skills / tools / methods"
-                        : "Details & achievements"
-                    }
-                    hint={
-                      section.kind === "skills"
-                        ? "Separate skills with commas or use one group per entry."
-                        : "Use a new line for each point. Start a line with “- ” for a bullet."
-                    }
-                  >
-                    <textarea
-                      rows={section.kind === "skills" ? 3 : 5}
-                      maxLength={20000}
-                      value={e.description}
-                      onChange={(ev) =>
-                        editEntry(e.id, { description: ev.target.value })
-                      }
-                      placeholder={
-                        section.kind === "education"
-                          ? "Relevant coursework, thesis, GPA or academic distinctions"
-                          : section.kind === "skills"
-                            ? "e.g. Python, R, statistical analysis"
-                            : "- Describe your contribution\n- Add a method, result or outcome"
-                      }
-                    />
-                  </Field>
+                  {["skills", "text"].includes(section.kind) && <><TextInput label="Link URL" value={e.url} onChange={(url) => editEntry(e.id, {url})}/><TextInput label="Link display name" value={e.urlLabel ?? ""} onChange={(urlLabel) => editEntry(e.id, {urlLabel})} placeholder="Link" /></>}
+                  <AlignmentControl value={e.style?.textAlign ?? section.style?.textAlign ?? cv.design.textAlign} onChange={(textAlign) => editEntry(e.id, {style: {indent: e.style?.indent ?? 0, spacingAfter: e.style?.spacingAfter ?? 10, ...e.style, textAlign}})} label="Entry text alignment" />
+                  <RichEditor label={section.kind === "skills" ? "Skills / tools / methods" : "Details & achievements"} value={e.description} multiline onChange={(description) => editEntry(e.id,{description})}/>
                 </div>
               ))}
               <button
@@ -1646,8 +1583,8 @@ export default function Studio() {
       <div
         className={`preview-region ${mobile === "edit" ? "mobile-hide" : ""}`}
       >
-        {!["home", "imports", "account", "settings"].includes(panel) && (
-          <LivePreview cv={cv} />
+        {!["home", "imports", "account", "settings", "latex"].includes(panel) && (
+          <ExactPDFPreview cv={cv} />
         )}
       </div>
       <input
@@ -1699,7 +1636,7 @@ export default function Studio() {
                   <strong>{d.label || "Untitled CV"}</strong>
                   <span>
                     {templates.find((t) => t.id === d.template)?.category} ·{" "}
-                    {d.profile.name || "No name yet"}{" "}
+                    {readableText(d.profile.name) || "No name yet"}{" "}
                     {d.id === cv.id && "· Current"}
                   </span>
                 </button>

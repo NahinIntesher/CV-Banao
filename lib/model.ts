@@ -1,6 +1,10 @@
+export function readableText(text:string):string {if(!text.startsWith("cvb.rich.v1:"))return text;try{const runs=JSON.parse(decodeURIComponent(Array.from(atob(text.slice(12)),c=>"%"+c.charCodeAt(0).toString(16).padStart(2,"0")).join("")));return Array.isArray(runs)?runs.map(r=>typeof r.text==="string"?r.text:"").join(""):text;}catch{return text;}}
 export type Purpose = "academic" | "research" | "phd" | "industry";
 export type Template =
-  Purpose | `${Purpose}-${"minimal" | "rail" | "banner" | "editorial"}`;
+  | Purpose
+  | "academic-reference"
+  | "academic-teaching"
+  | `${Purpose}-${"minimal" | "rail" | "banner" | "editorial"}`;
 export type Font =
   | "inter"
   | "lora"
@@ -11,9 +15,15 @@ export type Font =
   | "merriweather"
   | "baskerville"
   | "noto"
-  | "dm";
+  | "dm"
+  | "newsreader"
+  | "alegreya"
+  | "plexsans"
+  | "plexmono"
+  | "editorial";
 export type Kind =
   "experience" | "education" | "publications" | "skills" | "text";
+export type TextAlign = "left" | "center" | "right" | "justify";
 export interface Entry {
   id: string;
   title: string;
@@ -21,7 +31,9 @@ export interface Entry {
   location: string;
   date: string;
   url: string;
+  urlLabel?: string;
   description: string;
+  style?: { indent: number; spacingAfter: number; textAlign?: TextAlign };
 }
 export interface Section {
   id: string;
@@ -29,6 +41,13 @@ export interface Section {
   kind: Kind;
   visible: boolean;
   entries: Entry[];
+  style?: {
+    textAlign?: TextAlign;
+    headingSize: number;
+    color: string;
+    spacingBefore: number;
+    divider: boolean;
+  };
 }
 export interface Profile {
   name: string;
@@ -39,6 +58,9 @@ export interface Profile {
   website: string;
   linkedin: string;
   scholar: string;
+  websiteLabel?: string;
+  linkedinLabel?: string;
+  scholarLabel?: string;
 }
 export interface CV {
   id: string;
@@ -48,6 +70,7 @@ export interface CV {
   summary: string;
   sections: Section[];
   design: {
+    textAlign?: TextAlign;
     font: Font;
     accent: string;
     textColor: string;
@@ -58,6 +81,7 @@ export interface CV {
     paper: "A4" | "LETTER";
     pageNumbers: boolean;
   };
+  latex?: { mode: "generated" | "custom"; source: string };
   updatedAt: string;
 }
 export const uid = () =>
@@ -146,6 +170,26 @@ for (const base of [...templates])
       ][i],
     }),
   );
+templates.push(
+  {
+    id: "academic-reference",
+    name: "Academic Classic",
+    category: "Academic",
+    description:
+      "Centered name, restrained headings and date-first education. Inspired by the supplied academic references.",
+    color: "#24483F",
+    font: "garamond",
+  },
+  {
+    id: "academic-teaching",
+    name: "Teaching Compact",
+    category: "Academic",
+    description:
+      "Clear uppercase headings, a compact academic record and generous space for teaching achievements.",
+    color: "#24483F",
+    font: "newsreader",
+  },
+);
 export const purposeOf = (id: Template): Purpose => id.split("-")[0] as Purpose;
 export const layoutOf = (id: Template) =>
   id.includes("-") ? id.split("-")[1] : "classic";
@@ -163,6 +207,17 @@ export const fonts: { id: Font; name: string; family: string }[] = [
   { id: "noto", name: "Noto Sans", family: "CVNoto" },
   { id: "dm", name: "DM Sans", family: "CVDM" },
 ];
+fonts.push(
+  { id: "newsreader", name: "Newsreader", family: "CVNewsreader" },
+  { id: "alegreya", name: "Alegreya", family: "CVAlegreya" },
+  { id: "plexsans", name: "IBM Plex Sans", family: "CVPlexSans" },
+  { id: "plexmono", name: "IBM Plex Mono", family: "CVPlexMono" },
+  {
+    id: "editorial",
+    name: "Editorial (upload your licensed font)",
+    family: "CVEditorial",
+  },
+);
 export const colors = [
   "#5945a5",
   "#263d62",
@@ -261,10 +316,12 @@ export function createCV(template: Template = "phd"): CV {
 export const filledEntry = (e: Entry) =>
   Boolean(
     [e.title, e.subtitle, e.location, e.date, e.url, e.description].some((s) =>
-      s.trim(),
+      readableText(s).trim(),
     ),
   );
 export function safeUrl(value: string): string {
+
+  value=readableText(value);
   if (!value.trim()) return "";
   try {
     const u = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
@@ -278,7 +335,7 @@ export function safeUrl(value: string): string {
   }
 }
 export const filename = (cv: CV) =>
-  (cv.profile.name || cv.label || "my-cv")
+  (readableText(cv.profile.name) || cv.label || "my-cv")
     .trim()
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "-")
@@ -324,13 +381,17 @@ export function validateCV(raw: unknown): CV {
     "scholar",
   ] as const)
     if (!str(c.profile[k], 2000)) return fail();
+  for (const k of ["websiteLabel", "linkedinLabel", "scholarLabel"] as const)
+    if (c.profile[k] !== undefined && !str(c.profile[k], 2000)) return fail();
+  const validAlign = (value: unknown) => value === undefined || ["left", "center", "right", "justify"].includes(value as string);
+  if (!validAlign(c.design?.textAlign)) return fail();
   const ids = new Set<string>();
   for (const s of c.sections) {
     if (
       !s ||
       !str(s.id, 200) ||
       ids.has(s.id) ||
-      !str(s.title, 120) ||
+      (!str(s.title, 20000) || readableText(s.title).length > 120) ||
       !["experience", "education", "publications", "skills", "text"].includes(
         s.kind,
       ) ||
@@ -342,7 +403,8 @@ export function validateCV(raw: unknown): CV {
     ids.add(s.id);
     const entryIds = new Set<string>();
     for (const e of s.entries) {
-      if (!e) return fail();
+      if(e?.url && e.urlLabel === undefined){const legacy=e.title.match(/\s*\[(link|code|demo|paper|github|dataset)\]$/i);if(legacy){e.urlLabel=legacy[1];e.title=e.title.slice(0,legacy.index).trim();}}
+      if (!e || (e.urlLabel !== undefined && !str(e.urlLabel, 2000))) return fail();
       for (const k of [
         "id",
         "title",
@@ -356,6 +418,37 @@ export function validateCV(raw: unknown): CV {
       if (entryIds.has(e.id)) return fail();
       entryIds.add(e.id);
     }
+  }
+  if (
+    c.latex &&
+    (!["generated", "custom"].includes(c.latex.mode) ||
+      !str(c.latex.source, 150000))
+  )
+    return fail();
+  for (const section of c.sections) {
+    if (
+      section.style &&
+      (!validAlign(section.style.textAlign) || !Number.isFinite(section.style.headingSize) ||
+        section.style.headingSize < 10 ||
+        section.style.headingSize > 22 ||
+        !/^#[0-9a-f]{6}$/i.test(section.style.color) ||
+        !Number.isFinite(section.style.spacingBefore) ||
+        section.style.spacingBefore < 0 ||
+        section.style.spacingBefore > 30 ||
+        typeof section.style.divider !== "boolean")
+    )
+      return fail();
+    for (const entry of section.entries)
+      if (
+        entry.style &&
+        (!validAlign(entry.style.textAlign) || !Number.isFinite(entry.style.indent) ||
+          entry.style.indent < 0 ||
+          entry.style.indent > 24 ||
+          !Number.isFinite(entry.style.spacingAfter) ||
+          entry.style.spacingAfter < 0 ||
+          entry.style.spacingAfter > 24)
+      )
+        return fail();
   }
   const d = c.design;
   if (d && d.textColor === undefined) d.textColor = "#202633";
@@ -385,24 +478,25 @@ export function validateCV(raw: unknown): CV {
 }
 export function plainText(cv: CV): string {
   const p = cv.profile;
+  const readable=(text:string) => {if(!text.startsWith("cvb.rich.v1:"))return text;try{return JSON.parse(decodeURIComponent(Array.from(atob(text.slice(12)),c=>"%"+c.charCodeAt(0).toString(16).padStart(2,"0")).join(""))).map((r:{text:string})=>r.text).join("");}catch{return text;}};
   return [
     p.name,
     p.headline,
-    [p.email, p.phone, p.location].filter(Boolean).join(" | "),
+    [p.email, p.phone, p.location].map(readable).filter(Boolean).join(" | "),
     [p.website, p.linkedin, p.scholar].filter(Boolean).join("\n"),
     cv.summary,
     ...cv.sections
       .filter((s) => s.visible && s.entries.some(filledEntry))
       .map(
         (s) =>
-          `${s.title.toUpperCase()}\n${s.entries
+          `${readable(s.title).toUpperCase()}\n${s.entries
             .filter(filledEntry)
             .map((e) =>
               [
-                e.title,
-                [e.subtitle, e.location, e.date].filter(Boolean).join(" | "),
+                readable(e.title),
+                [readable(e.subtitle), readable(e.location), readable(e.date)].filter(Boolean).join(" | "),
                 e.url,
-                e.description,
+                readable(e.description),
               ]
                 .filter(Boolean)
                 .join("\n"),
@@ -411,13 +505,13 @@ export function plainText(cv: CV): string {
       ),
   ]
     .filter(Boolean)
-    .join("\n\n");
+    .map(readable).join("\n\n");
 }
 export function checks(cv: CV) {
   return [
     {
       label: "Add your full name",
-      done: !!cv.profile.name.trim(),
+      done: !!readableText(cv.profile.name).trim(),
       target: "profile",
     },
     {
@@ -427,7 +521,7 @@ export function checks(cv: CV) {
     },
     {
       label: "Write a short profile or objective",
-      done: !!cv.summary.trim(),
+      done: !!readableText(cv.summary).trim(),
       target: "profile",
     },
     {
@@ -436,7 +530,7 @@ export function checks(cv: CV) {
         (s) =>
           s.kind === "education" &&
           s.visible &&
-          s.entries.some((e) => e.title.trim()),
+          s.entries.some((e) => readableText(e.title).trim()),
       ),
       target: cv.sections.find((s) => s.kind === "education")?.id || "profile",
     },
@@ -446,7 +540,7 @@ export function checks(cv: CV) {
         (s) =>
           s.visible &&
           s.kind === "experience" &&
-          s.entries.some((e) => e.description.trim()),
+          s.entries.some((e) => readableText(e.description).trim()),
       ),
       target: cv.sections.find((s) => s.kind === "experience")?.id || "profile",
     },

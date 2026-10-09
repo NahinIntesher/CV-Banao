@@ -1,4 +1,7 @@
+import { richRuns,richLines,richPlain,withoutBullet,joinRich,richUpperCase } from "./rich";
 import React from "react";
+import { documentFont, compileCV, pdfBlob } from "./fonts";
+import { linkParts, entryLinkLabel, profileLinkLabel } from "./links";
 import {
   Document,
   Page,
@@ -12,16 +15,24 @@ import { CV, filledEntry, fonts, safeUrl, purposeOf, layoutOf } from "./model";
 let registered = false;
 export function registerFonts(origin = "") {
   if (registered) return;
-  for (const f of fonts)
+  for (const f of fonts.filter((f) => f.id !== "editorial"))
     PDFFont.register({
       family: f.family,
       fonts: [
         { src: `${origin}/fonts/${f.id}-400.woff`, fontWeight: 400 },
         { src: `${origin}/fonts/${f.id}-700.woff`, fontWeight: 700 },
+        { src: `${origin}/fonts/${f.id}-400-italic.woff`, fontWeight: 400, fontStyle:"italic" },
+        { src: `${origin}/fonts/${f.id}-700-italic.woff`, fontWeight: 700, fontStyle:"italic" },
       ],
     });
   PDFFont.registerHyphenationCallback((word) => [word]);
   registered = true;
+}
+function Inline({text, accent}: {text:string;accent:string}) {
+  return <>{richRuns(text).map((p,i) => {
+    const style={fontFamily:p.font?fonts.find(f=>f.id===p.font)?.family:undefined,fontSize:p.fontSize,color:p.color ?? (p.href?accent:undefined),fontWeight:p.bold===undefined?undefined:p.bold?700:400,fontStyle:p.italic?"italic" as const:undefined,textDecoration:p.underline?"underline" as const:undefined};
+    return p.href ? <Link key={i} src={p.href} style={style}>{p.text}</Link> : <Text key={i} style={style}>{p.text}</Text>;
+  })}</>;
 }
 export function PDFDocument({ cv }: { cv: CV }) {
   const d = cv.design,
@@ -31,7 +42,7 @@ export function PDFDocument({ cv }: { cv: CV }) {
     layout = layoutOf(cv.template);
   const center =
     (layout === "classic" && ["academic", "phd"].includes(purpose)) ||
-    layout === "editorial";
+    ["editorial", "reference", "teaching"].includes(layout);
   const tinted = d.accent + "10";
   const size = d.fontSize;
   const heading = {
@@ -41,7 +52,7 @@ export function PDFDocument({ cv }: { cv: CV }) {
     marginBottom: 7,
     paddingBottom: 5,
     borderBottomWidth:
-      layout === "minimal" || layout === "banner"
+      layout === "minimal" || layout === "banner" || layout === "reference"
         ? 0
         : layout === "editorial"
           ? 1.2
@@ -59,8 +70,8 @@ export function PDFDocument({ cv }: { cv: CV }) {
   const body = { marginBottom: 3 };
   return (
     <Document
-      title={`${p.name || "Untitled"} — Curriculum Vitae`}
-      author={p.name}
+      title={`${richPlain(p.name) || "Untitled"} — Curriculum Vitae`}
+      author={richPlain(p.name)}
       creator="CV Banao"
       language="en"
     >
@@ -110,53 +121,65 @@ export function PDFDocument({ cv }: { cv: CV }) {
               lineHeight: 1.15,
             }}
           >
-            {p.name || "Your name"}
+            <Inline text={p.name || "Your name"} accent={d.accent}/>
           </Text>
-          {p.headline && (
+          {!!p.headline && (
             <Text style={{ fontSize: size + 1.5, marginTop: 5 }}>
-              {p.headline}
+              <Inline text={p.headline} accent={d.accent}/>
             </Text>
           )}
           {[p.email, p.phone, p.location].some(Boolean) && (
             <Text
               style={{ fontSize: size - 1, color: "#525969", marginTop: 6 }}
             >
-              {[p.email, p.phone, p.location].filter(Boolean).join("   |   ")}
+              <Inline text={joinRich([p.email, p.phone, p.location],"   |   ")} accent={d.accent}/>
             </Text>
           )}
-          {[p.website, p.linkedin, p.scholar].filter(Boolean).map((u, i) => (
-            <View key={i} style={{ marginTop: 2 }}>
-              <Link
-                src={safeUrl(u) || ""}
-                style={{
-                  fontSize: size - 1,
-                  color: d.accent,
-                  textDecoration: "none",
-                }}
-              >
-                {u.replace(/^https?:\/\//, "")}
-              </Link>
-            </View>
-          ))}
+          <View style={{flexDirection:"row",flexWrap:"wrap",justifyContent:center?"center":"flex-start",gap:11.25,marginTop:3}}>
+            {(["website","linkedin","scholar"] as const).filter(k=>safeUrl(p[k])).map(k => <Link key={k} src={safeUrl(p[k])} style={{fontSize:size*.9,color:d.accent,textDecoration:"none"}}><Inline text={profileLinkLabel(p,k)} accent={d.accent}/></Link>)}
+          </View>
         </View>
-        {cv.summary && (
+        {!!cv.summary && (
           <View style={{ marginTop: d.spacing }}>
             <Text minPresenceAhead={30} style={heading}>
               {purpose === "industry" ? "Professional summary" : "Profile"}
             </Text>
-            <Text>{cv.summary}</Text>
+            <Text style={{textAlign:d.textAlign ?? "left"}}><Inline text={cv.summary} accent={d.accent}/></Text>
           </View>
         )}
         {cv.sections
           .filter((s) => s.visible && s.entries.some(filledEntry))
           .map((s) => (
-            <View key={s.id} style={{ marginTop: d.spacing }}>
-              <Text minPresenceAhead={45} style={heading}>
-                {purpose === "academic" ? s.title.toUpperCase() : s.title}
+            <View
+              key={s.id}
+              style={{ marginTop: s.style?.spacingBefore ?? d.spacing }}
+            >
+              <Text
+                minPresenceAhead={45}
+                style={
+                  s.style
+                    ? {
+                        ...heading,
+                        fontSize: s.style.headingSize,
+                        color: s.style.color,
+                        borderBottomWidth: s.style.divider ? 0.7 : 0,
+                        borderBottomColor: s.style.color,
+                      }
+                    : heading
+                }
+              >
+                <Inline text={layout === "teaching" || (purpose === "academic" && layout !== "reference") ? richUpperCase(s.title) : s.title} accent={d.accent}/>
               </Text>
               {s.entries.filter(filledEntry).map((e) => (
-                <View key={e.id} style={{ marginBottom: 10 }}>
-                  {(e.title || e.date) && (
+                <View
+                  key={e.id}
+                  style={{
+                    marginBottom: e.style?.spacingAfter ?? 10,
+                    marginLeft: e.style?.indent ?? 0,
+                    textAlign:e.style?.textAlign ?? s.style?.textAlign ?? d.textAlign ?? "left",
+                  }}
+                >
+                  {!!(e.title || e.date) && (
                     <View
                       minPresenceAhead={e.description ? 65 : 32}
                       style={{
@@ -166,7 +189,7 @@ export function PDFDocument({ cv }: { cv: CV }) {
                       }}
                     >
                       <Text style={{ fontWeight: 700, flex: 1 }}>
-                        {e.title}
+                        <Inline text={e.title} accent={d.accent}/>
                       </Text>
                       <Text
                         style={{
@@ -176,11 +199,11 @@ export function PDFDocument({ cv }: { cv: CV }) {
                           color: "#525969",
                         }}
                       >
-                        {e.date}
+                        <Inline text={e.date} accent={d.accent}/>
                       </Text>
                     </View>
                   )}
-                  {(e.subtitle || e.location) && (
+                  {!!(e.subtitle || e.location) && (
                     <Text
                       minPresenceAhead={e.description ? 20 : 0}
                       style={{
@@ -190,10 +213,10 @@ export function PDFDocument({ cv }: { cv: CV }) {
                         marginBottom: 3,
                       }}
                     >
-                      {[e.subtitle, e.location].filter(Boolean).join(" · ")}
+                      <Inline text={joinRich([e.subtitle, e.location]," · ")} accent={d.accent}/>
                     </Text>
                   )}
-                  {e.url && (
+                  {!!e.url && (
                     <Link
                       src={safeUrl(e.url) || ""}
                       style={{
@@ -202,26 +225,24 @@ export function PDFDocument({ cv }: { cv: CV }) {
                         marginBottom: 3,
                       }}
                     >
-                      {e.url.replace(/^https?:\/\//, "")}
+                      <Inline text={entryLinkLabel(e)} accent={d.accent}/>
                     </Link>
                   )}
-                  {e.description
-                    .split("\n")
-                    .filter((l) => l.trim())
+                  {richLines(e.description)
                     .map((line, i) =>
-                      /^[•*\-]\s/.test(line) ? (
+                      /^[•*\-]\s/.test(richPlain(line)) ? (
                         <View
                           key={i}
                           style={{ flexDirection: "row", marginBottom: 3 }}
                         >
                           <Text style={{ width: 12 }}>•</Text>
                           <Text style={{ flex: 1 }}>
-                            {line.replace(/^[•*\-]\s/, "")}
+                            <Inline text={withoutBullet(line)} accent={d.accent}/>
                           </Text>
                         </View>
                       ) : (
                         <Text orphans={2} widows={2} key={i} style={body}>
-                          {line}
+                          <Inline text={line} accent={d.accent}/>
                         </Text>
                       ),
                     )}
@@ -234,15 +255,17 @@ export function PDFDocument({ cv }: { cv: CV }) {
             fixed
             style={{
               position: "absolute",
-              bottom: 20,
+              top: (d.paper === "A4" ? 841.89 : 792) - 32,
               left: d.margins,
               right: d.margins,
               textAlign: "center",
               fontSize: 8,
+              lineHeight: 1.2,
+              fontFamily: "Helvetica",
               color: "#6b7280",
             }}
             render={({ pageNumber, totalPages }) =>
-              `${p.name ? p.name + "  ·  " : ""}${pageNumber} / ${totalPages}`
+              `${p.name ? richPlain(p.name) + "  ·  " : ""}${pageNumber} / ${totalPages}`
             }
           />
         )}
@@ -250,7 +273,37 @@ export function PDFDocument({ cv }: { cv: CV }) {
     </Document>
   );
 }
-export async function createPDF(cv: CV) {
+async function renderPDF(cv: CV) {
+  if (cv.latex?.mode === "custom") return pdfBlob((await compileCV(cv)).pdf);
+  if (cv.design.font === "editorial") {
+    const f = await documentFont("editorial");
+    PDFFont.register({
+      family: "CVEditorial",
+      fonts: [
+        { src: "data:font/ttf;base64," + f.regular, fontWeight: 400 },
+        { src: "data:font/ttf;base64," + f.bold, fontWeight: 700 },
+        { src: "data:font/ttf;base64," + f.regular, fontWeight: 400, fontStyle:"italic" },
+        { src: "data:font/ttf;base64," + f.bold, fontWeight: 700, fontStyle:"italic" },
+      ],
+    });
+  }
   registerFonts(window.location.origin);
   return pdf(<PDFDocument cv={cv} />).toBlob();
+}
+
+// One rendering result serves live preview, preview modal and download. Serialize
+// React-PDF renders because font registration and the renderer are process-global.
+const cache = new Map<string, Promise<Blob>>();
+let queue: Promise<unknown> = Promise.resolve();
+export function createPDF(cv: CV): Promise<Blob> {
+  const fontKey=cv.design.font === "editorial" && typeof localStorage !== "undefined" ? localStorage.getItem("cvb:editorial:regular")+":"+localStorage.getItem("cvb:editorial:bold") : "";
+  const key=JSON.stringify(cv)+fontKey;
+  const existing=cache.get(key); if(existing)return existing;
+  const snapshot=structuredClone(cv);
+  const result=queue.then(() => renderPDF(snapshot));
+  queue=result.catch(() => {});
+  cache.set(key,result);
+  while(cache.size>3)cache.delete(cache.keys().next().value!);
+  result.catch(() => {if(cache.get(key)===result)cache.delete(key);});
+  return result;
 }

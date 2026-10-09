@@ -1,0 +1,1 @@
+Italic WOFF files for the original ten families use the installed @fontsource italic faces. Newsreader, Alegreya, IBM Plex Sans and IBM Plex Mono use derived slanted faces created from the bundled OFL font files, with renamed internal font names. The original family licenses accompany them. Editorial requires the user's licensed fonts.
